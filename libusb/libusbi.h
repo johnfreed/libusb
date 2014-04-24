@@ -211,8 +211,8 @@ static inline void usbi_dbg(const char *format, ...)
 #define DEVICE_CTX(dev) ((dev)->ctx)
 #define HANDLE_CTX(handle) (DEVICE_CTX((handle)->dev))
 #define TRANSFER_CTX(transfer) (HANDLE_CTX((transfer)->dev_handle))
-#define ITRANSFER_CTX(transfer) \
-	(TRANSFER_CTX(USBI_TRANSFER_TO_LIBUSB_TRANSFER(transfer)))
+#define ITRANSFER_CTX(itransfer) \
+	(TRANSFER_CTX(USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer)))
 
 #define IS_EPIN(ep) (0 != ((ep) & LIBUSB_ENDPOINT_IN))
 #define IS_EPOUT(ep) (!IS_EPIN(ep))
@@ -396,18 +396,18 @@ enum usbi_transfer_flags {
 	USBI_TRANSFER_UPDATED_FDS = 1 << 4,
 };
 
-#define USBI_TRANSFER_TO_LIBUSB_TRANSFER(transfer) \
-	((struct libusb_transfer *)(((unsigned char *)(transfer)) \
+#define USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer) \
+	((struct libusb_transfer *)(((unsigned char *)(itransfer)) \
 		+ sizeof(struct usbi_transfer)))
 #define LIBUSB_TRANSFER_TO_USBI_TRANSFER(transfer) \
 	((struct usbi_transfer *)(((unsigned char *)(transfer)) \
 		- sizeof(struct usbi_transfer)))
 
-static inline void *usbi_transfer_get_os_priv(struct usbi_transfer *transfer)
+static inline void *usbi_transfer_get_os_priv(struct usbi_transfer *itransfer)
 {
-	return ((unsigned char *)transfer) + sizeof(struct usbi_transfer)
+	return ((unsigned char *)itransfer) + sizeof(struct usbi_transfer)
 		+ sizeof(struct libusb_transfer)
-		+ (transfer->num_iso_packets
+		+ (itransfer->num_iso_packets
 			* sizeof(struct libusb_iso_packet_descriptor));
 }
 
@@ -433,7 +433,7 @@ void usbi_handle_disconnect(struct libusb_device_handle *handle);
 
 int usbi_handle_transfer_completion(struct usbi_transfer *itransfer,
 	enum libusb_transfer_status status);
-int usbi_handle_transfer_cancellation(struct usbi_transfer *transfer);
+int usbi_handle_transfer_cancellation(struct usbi_transfer *itransfer);
 
 int usbi_parse_descriptor(const unsigned char *source, const char *descriptor,
 	void *dest, int host_endian);
