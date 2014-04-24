@@ -38,6 +38,8 @@
 #include "libusbi.h"
 #include "hotplug.h"
 
+#define LIBUSB_DEFAULT_TIMEOUT 60000 /* milliseconds */
+
 /**
  * \page io Synchronous and asynchronous device I/O
  *
@@ -1500,8 +1502,11 @@ int API_EXPORTED libusb_cancel_transfer(struct libusb_transfer *transfer)
 		else
 			usbi_dbg("cancel transfer failed error %d", r);
 
-		if (r == LIBUSB_ERROR_NO_DEVICE)
+		if (r == LIBUSB_ERROR_NO_DEVICE) {
+			usbi_dbg("setting disappeared flag");
 			itransfer->flags |= USBI_TRANSFER_DEVICE_DISAPPEARED;
+			transfer->status |= LIBUSB_TRANSFER_NO_DEVICE;
+		}
 	}
 
 	itransfer->flags |= USBI_TRANSFER_CANCELLING;
@@ -1922,6 +1927,9 @@ static int handle_timeouts_locked(struct libusb_context *ctx)
 
 		/* otherwise, we've got an expired timeout to handle */
 		handle_timeout(transfer);
+
+		if (transfer->flags & USBI_TRANSFER_DEVICE_DISAPPEARED)
+			return LIBUSB_ERROR_NO_DEVICE;
 	}
 	return 0;
 }
@@ -2100,30 +2108,37 @@ handled:
 	return r;
 }
 
-/* returns the smallest of:
+/* \param tv (in) user-supplied timeout relative to current time
+ * \param out (out) timeout relative to current time
+ * Returns LIBUSB_ERROR_OTHER if that's what libusb_get_next_timeout
+ * returned.
+ * Returns 1 if libusb_get_next_timeout() returned 1 with an
+ * already-expired timeout, or because it returned 0, indicating no
+ * URB timeouts or OS handles timeouts. This result signifies that
+ * libusb_handle_events_timeout_completed() should be called with a
+ * timeout of zero.
+ * Otherwise returns 0 and populates out with the smallest of:
  *  1. timeout of next URB
  *  2. user-supplied timeout
- * returns 1 if there is an already-expired timeout, otherwise returns 0
- * and populates out
  */
 static int get_next_timeout(libusb_context *ctx, struct timeval *tv,
 	struct timeval *out)
 {
 	struct timeval timeout;
 	int r = libusb_get_next_timeout(ctx, &timeout);
-	if (r) {
-		/* timeout already expired? */
-		if (!timerisset(&timeout))
-			return 1;
 
-		/* choose the smallest of next URB timeout or user specified timeout */
-		if (timercmp(&timeout, tv, <))
-			*out = timeout;
-		else
-			*out = *tv;
-	} else {
+	if (r == LIBUSB_ERROR_OTHER)
+		return r;
+
+	/* timeout already expired or handled by OS? */
+	if (r == 0 || !timerisset(&timeout))
+		return 1;
+
+	/* choose the smallest of next URB timeout or user specified timeout */
+	if (timercmp(&timeout, tv, <))
+		*out = timeout;
+	else
 		*out = *tv;
-	}
 	return 0;
 }
 
@@ -2132,6 +2147,10 @@ static int get_next_timeout(libusb_context *ctx, struct timeval *tv,
  *
  * libusb determines "pending events" by checking if any timeouts have expired
  * and by checking the set of file descriptors for activity.
+ *
+ * If the parameter tv->tv_sec == -1 then handle any pending events in
+ * blocking mode. There is now a timeout hardcoded at LIBUSB_DEFAULT_TIMEOUT
+ * milliseconds but we plan to make it unlimited in the future.
  *
  * If a zero timeval is passed, this function will handle any already-pending
  * events and then immediately return in non-blocking style.
@@ -2147,8 +2166,8 @@ static int get_next_timeout(libusb_context *ctx, struct timeval *tv,
  * of a specific transfer.
  *
  * \param ctx the context to operate on, or NULL for the default context
- * \param tv the maximum time to block waiting for events, or an all zero
- * timeval struct for non-blocking mode
+ * \param tv the maximum time (relative to current time) to block waiting for
+ * events, or an all zero timeval struct for non-blocking mode
  * \param completed pointer to completion integer to check, or NULL
  * \returns 0 on success, or a LIBUSB_ERROR code on failure
  * \ref mtasync
@@ -2158,12 +2177,22 @@ int API_EXPORTED libusb_handle_events_timeout_completed(libusb_context *ctx,
 {
 	int r;
 	struct timeval poll_timeout;
-
 	USBI_GET_CONTEXT(ctx);
+
+	/* if we were called with a negative timeout, use default
+	 * rather than potentially blocking forever */
+	if (tv->tv_sec < 0) {
+		tv->tv_sec = LIBUSB_DEFAULT_TIMEOUT / 1000;
+		tv->tv_usec = 0;
+	}
+	usbi_dbg("getting poll timeout, with max at %d ms",tv->tv_sec*1000 + tv->tv_usec/1000);
 	r = get_next_timeout(ctx, tv, &poll_timeout);
 	if (r) {
-		/* timeout already expired */
-		return handle_timeouts(ctx);
+		/* timeout already expired or OS handles timeout,
+		 * so use zero timeout and fall through to loop that
+		 * calls handle_events and has a backend hook */
+		poll_timeout.tv_sec = 0;
+		poll_timeout.tv_usec = 0;
 	}
 
 retry:
@@ -2219,7 +2248,8 @@ already_done:
  *
  * \param ctx the context to operate on, or NULL for the default context
  * \param tv the maximum time to block waiting for events, or an all zero
- * timeval struct for non-blocking mode
+ * timeval struct for non-blocking mode, or a negative value to wait
+ * forever (in practice LIBUSB_DEFAULT_TIMEOUT)
  * \returns 0 on success, or a LIBUSB_ERROR code on failure
  */
 int API_EXPORTED libusb_handle_events_timeout(libusb_context *ctx,
@@ -2230,10 +2260,10 @@ int API_EXPORTED libusb_handle_events_timeout(libusb_context *ctx,
 
 /** \ingroup poll
  * Handle any pending events in blocking mode. There is currently a timeout
- * hardcoded at 60 seconds but we plan to make it unlimited in future. For
- * finer control over whether this function is blocking or non-blocking, or
- * for control over the timeout, use libusb_handle_events_timeout_completed()
- * instead.
+ * hardcoded at LIBUSB_DEFAULT_TIMEOUT milliseconds but we plan to make it
+ * unlimited. For finer control over whether this function is blocking or
+ * non-blocking, or for control over the timeout, use
+ * libusb_handle_events_timeout_completed() instead.
  *
  * This function is kept primarily for backwards compatibility.
  * All new code should call libusb_handle_events_completed() or
@@ -2245,13 +2275,15 @@ int API_EXPORTED libusb_handle_events_timeout(libusb_context *ctx,
 int API_EXPORTED libusb_handle_events(libusb_context *ctx)
 {
 	struct timeval tv;
-	tv.tv_sec = 60;
+	/* -1 sec means forever, hardcoded to LIBUSB_DEFAULT_TIMEOUT */
+	tv.tv_sec = -1;
 	tv.tv_usec = 0;
 	return libusb_handle_events_timeout_completed(ctx, &tv, NULL);
 }
 
 /** \ingroup poll
- * Handle any pending events in blocking mode.
+ * Handle any pending events in blocking mode. There is currently a timeout
+ * hardcoded to LIBUSB_DEFAULT_TIMEOUT but we plan to make it unlimited.
  *
  * Like libusb_handle_events(), with the addition of a completed parameter
  * to allow for race free waiting for the completion of a specific transfer.
@@ -2268,7 +2300,8 @@ int API_EXPORTED libusb_handle_events_completed(libusb_context *ctx,
 	int *completed)
 {
 	struct timeval tv;
-	tv.tv_sec = 60;
+	/* -1 second means forever, hardcoded to LIBUSB_DEFAULT_TIMEOUT */
+	tv.tv_sec = -1;
 	tv.tv_usec = 0;
 	return libusb_handle_events_timeout_completed(ctx, &tv, completed);
 }
@@ -2359,18 +2392,25 @@ int API_EXPORTED libusb_pollfds_handle_timeouts(libusb_context *ctx)
  * When the timeout has expired, call into libusb_handle_events_timeout()
  * (perhaps in non-blocking mode) so that libusb can handle the timeout.
  *
- * This function may return 1 (success) and an all-zero timeval. If this is
- * the case, it indicates that libusb has a timeout that has already expired
- * so you should call libusb_handle_events_timeout() or similar immediately.
+ * This function may return 1 (success) and a timeval of cleartimer(tv),
+ * referred to here as an "infinite" timeout. If this is the case, it indicates
+ * that libusb has a timeout that has already expired, so you should call
+ * libusb_handle_events_timeout() or similar immediately.
+ *
  * A return code of 0 indicates that there are no pending timeouts.
  *
- * On some platforms, this function will always returns 0 (no pending
+ * On some platforms, this function will always return 0 (no pending
  * timeouts). See \ref polltime.
  *
  * \param ctx the context to operate on, or NULL for the default context
- * \param tv output location for a relative time against the current
- * clock in which libusb must be called into in order to process timeout events
- * \returns 0 if there are no pending timeouts, 1 if a timeout was returned,
+ * \param tv (out) relative time against the current clock in which libusb
+ * must be called into in order to process timeout events. If timerisset(tv)
+ * returns a value of false, it indicates that libusb has a timeout that has
+ * already expired (or that the OS handles timeouts).
+ *
+ * \returns 0 if there are no pending timeouts (though there may be expired
+ * ones handled by the OS),
+ * 1 if a timeout was returned (including expired ones unhandled by the OS),
  * or LIBUSB_ERROR_OTHER on failure
  */
 int API_EXPORTED libusb_get_next_timeout(libusb_context *ctx,
@@ -2418,7 +2458,7 @@ int API_EXPORTED libusb_get_next_timeout(libusb_context *ctx,
 	r = usbi_backend->clock_gettime(USBI_CLOCK_MONOTONIC, &cur_ts);
 	if (r < 0) {
 		usbi_err(ctx, "failed to read monotonic clock, errno=%d", errno);
-		return 0;
+		return LIBUSB_ERROR_OTHER;
 	}
 	TIMESPEC_TO_TIMEVAL(&cur_tv, &cur_ts);
 
