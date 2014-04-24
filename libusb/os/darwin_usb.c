@@ -102,7 +102,13 @@ static const char *darwin_error_str (int result) {
   case kIOReturnNoResources:
     return "out of resources";
   case kIOUSBHighSpeedSplitError:
-    return "high speed split error";
+    return "high speed split";
+  case kIOUSBUnknownPipeErr:
+    return "unknown pipe";
+  case kIOReturnNotPermitted:
+    return "not permitted";
+  case kIOUSBEndpointNotFound:
+    return "endpoint not found";
   default:
     snprintf(string_buffer, sizeof(string_buffer), "unknown error (0x%x)", result);
     return string_buffer;
@@ -116,6 +122,7 @@ static int darwin_to_libusb (int result) {
   case kIOReturnSuccess:
     return LIBUSB_SUCCESS;
   case kIOReturnNotOpen:
+    return LIBUSB_ERROR_OTHER;
   case kIOReturnNoDevice:
     return LIBUSB_ERROR_NO_DEVICE;
   case kIOReturnExclusiveAccess:
@@ -584,7 +591,7 @@ static int darwin_check_configuration (struct libusb_context *ctx, struct darwin
   } else
     /* not configured */
     dev->active_config = 0;
-  
+
   usbi_dbg ("active config: %u, first config: %u", dev->active_config, dev->first_config);
 
   return 0;
@@ -1315,7 +1322,7 @@ static int darwin_kernel_driver_active(struct libusb_device_handle *dev_handle, 
   return 0;
 }
 
-/* attaching/detaching kernel drivers is not currently supported (maybe in the future?) */
+/* FIXME: attaching/detaching kernel drivers is not currently supported (maybe in the future?) */
 static int darwin_attach_kernel_driver (struct libusb_device_handle *dev_handle, int interface) {
   (void)dev_handle;
   (void)interface;
@@ -1685,7 +1692,12 @@ static void darwin_async_io_callback (void *refcon, IOReturn result, void *arg0)
   }
 
   /* send a completion message to the device's file descriptor */
-  write (priv->fds[1], &message, sizeof (message));
+  int ret = write (priv->fds[1], &message, sizeof (message));
+  if (sizeof (message) != ret) {
+    usbi_dbg("error writing timeout message, wrote %d, wanted %d", ret, sizeof(message));
+  } else {
+    usbi_dbg("wrote timeout message, size %d", ret);
+  }
 }
 
 static int darwin_transfer_status (struct usbi_transfer *itransfer, kern_return_t result) {
