@@ -45,12 +45,28 @@ static void sync_transfer_wait_for_completion(struct libusb_transfer *transfer)
 {
 	int r, *completed = transfer->user_data;
 	struct libusb_context *ctx = HANDLE_CTX(transfer->dev_handle);
-
+	struct usbi_transfer *itransfer = LIBUSB_TRANSFER_TO_USBI_TRANSFER(transfer);
+	struct timeval tv;
+	/* transfer's timeout is in milliseconds */
+	usbi_dbg("timeout is %d ms",transfer->timeout);
+	/* call to handle events timeout completed wants a timeval */
+	tv.tv_sec = transfer->timeout / 1000;
+	tv.tv_usec = (transfer->timeout - tv.tv_sec * 1000 ) * 1000;
 	while (!*completed) {
-		r = libusb_handle_events_completed(ctx, completed);
+		r = libusb_handle_events_timeout_completed(ctx, &tv, completed);
+
 		if (r < 0) {
 			if (r == LIBUSB_ERROR_INTERRUPTED)
 				continue;
+			if (r == LIBUSB_ERROR_NO_DEVICE) {
+				transfer->status |= LIBUSB_TRANSFER_NO_DEVICE;
+				break;
+			}
+			if (itransfer->flags & USBI_TRANSFER_CANCELLING) {
+				usbi_err(ctx, "libusb_handle_events failed: %s, but transfer is already cancelling",
+					libusb_error_name(r));
+				continue;
+			}
 			usbi_err(ctx, "libusb_handle_events failed: %s, cancelling transfer and retrying",
 				 libusb_error_name(r));
 			libusb_cancel_transfer(transfer);
