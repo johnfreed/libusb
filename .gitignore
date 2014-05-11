@@ -48,3 +48,5 @@ Release
 *~
 *.orig
 .dirstamp
+Xcode/libusb.xcodeproj/project.xcworkspace/**
+Xcode/libusb.xcodeproj/xcuserdata/**
