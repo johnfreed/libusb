@@ -334,6 +334,11 @@ struct libusb_device_handle {
 	struct list_head list;
 	struct libusb_device *dev;
 	int auto_detach_kernel_driver;
+
+	struct libusb_options *options;
+	struct libusb_options *options_cache;
+	void *os_options;
+
 	unsigned char os_priv
 #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L)
 	[] /* valid C99 code */
@@ -624,6 +629,8 @@ struct usbi_os_backend {
 	 * do this for you.
 	 */
 	int (*open)(struct libusb_device_handle *handle);
+
+	int (*open_extended)(struct libusb_device_handle *handle, struct libusb_options *options, void *os_options);
 
 	/* Close a device such that the handle cannot be used again. Your backend
 	 * should destroy any resources that were allocated in the open path.
@@ -996,6 +1003,9 @@ struct usbi_os_backend {
 	 * This private data area is accessible through the "os_priv" field of
 	 * struct libusb_device. */
 	size_t device_handle_priv_size;
+
+	int (*get_options)(struct libusb_device_handle *hdev, struct libusb_options **options, void **os_options);
+	int (*set_options)(struct libusb_device_handle *hdev, struct libusb_options *options, void *os_options);
 
 	/* Number of bytes to reserve for per-transfer private backend data.
 	 * This private data area is accessible by calling

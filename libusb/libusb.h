@@ -24,6 +24,46 @@
 #ifndef LIBUSB_H
 #define LIBUSB_H
 
+#if !defined(OS_LINUX)
+#if defined(__linux) || defined(__gnu_linux__) || defined(__linux__)
+#define OS_LINUX 1
+#endif
+
+#elif !defined(OS_DARWIN)
+#if defined(__APPLE__)
+#define OS_DARWIN 1
+#endif
+
+#elif !defined(OS_NETBSD)
+#if defined(__NetBSD__)
+#define OS_NETBSD 1
+#endif
+
+#elif !defined(OS_OPENBSD)
+#if defined(__OpenBSD__)
+#define OS_OPENBSD 1
+#endif
+
+#elif !defined(OS_WINDOWS)
+#if defined(_WIN32) || defined(__CYGWIN__) || defined(__WIN32__) || defined(__TOS_WIN__) || defined(__WINDOWS__)
+#define OS_WINDOWS 1
+#endif
+
+#elif !defined(OS_WINCE)
+#if defined(_WIN32_WCE)
+#define OS_WINCE 1
+#endif
+
+#else
+#error "Unrecognized OS. You must define one of the following:"
+#error "  OS_LINUX   1"
+#error "  OS_DARWIN  1"
+#error "  OS_NETBSD  1"
+#error "  OS_OPENBSD 1"
+#error "  OS_WINDOWS 1"
+#error "  OS_WINCE   1"
+#endif
+
 #ifdef _MSC_VER
 /* on MS environments, the inline keyword is available in C++ only */
 #if !defined(__cplusplus)
@@ -310,6 +350,61 @@ enum libusb_descriptor_type {
 					(LIBUSB_BT_USB_2_0_EXTENSION_SIZE)       +\
 					(LIBUSB_BT_SS_USB_DEVICE_CAPABILITY_SIZE) +\
 					(LIBUSB_BT_CONTAINER_ID_SIZE))
+
+enum libusb_descriptor_bitmask {
+LIBUSB_DEVICE_B_LENGTH = LIBUSB_DT_DEVICE << 16 | 1 << 0,
+LIBUSB_DEVICE_BCD_USB = LIBUSB_DT_DEVICE << 16 | 1 << 1,
+LIBUSB_DEVICE_B_DEVICECLASS = LIBUSB_DT_DEVICE << 16 | 1 << 2,
+LIBUSB_DEVICE_B_DEVICESUBCLASS = LIBUSB_DT_DEVICE << 16 | 1 << 3,
+LIBUSB_DEVICE_B_DEVICEPROTOCOL = LIBUSB_DT_DEVICE << 16 | 1 << 4,
+LIBUSB_DEVICE_B_MAXPACKETSIZE0 = LIBUSB_DT_DEVICE << 16 | 1 << 5,
+LIBUSB_DEVICE_ID_VENDOR = LIBUSB_DT_DEVICE << 16 | 1 << 6,
+LIBUSB_DEVICE_ID_PRODUCT = LIBUSB_DT_DEVICE << 16 | 1 << 7,
+LIBUSB_DEVICE_BCD_DEVICE = LIBUSB_DT_DEVICE << 16 | 1 << 8,
+LIBUSB_DEVICE_I_MANUFACTURER = LIBUSB_DT_DEVICE << 16 | 1 << 9,
+LIBUSB_DEVICE_I_PRODUCT = LIBUSB_DT_DEVICE << 16 | 1 << 10,
+LIBUSB_DEVICE_I_SERIAL = LIBUSB_DT_DEVICE << 16 | 1 << 11,
+LIBUSB_DEVICE_B_NUMCONFIGURATIONS = LIBUSB_DT_DEVICE << 16 | 1 << 12,
+LIBUSB_DEVICE_S_MANUFACTURER = LIBUSB_DT_DEVICE << 16 | 1 << 13,
+LIBUSB_DEVICE_S_PRODUCT = LIBUSB_DT_DEVICE << 16 | 1 << 14,
+LIBUSB_DEVICE_S_SERIALNUMBER = LIBUSB_DT_DEVICE << 16 | 1 << 15,
+LIBUSB_CONFIG_B_LENGTH = LIBUSB_DT_CONFIG << 16 | 1 << 0,
+LIBUSB_CONFIG_W_TOTALLENGTH = LIBUSB_DT_CONFIG << 16 | 1 << 1,
+LIBUSB_CONFIG_B_NUMINTERFACES = LIBUSB_DT_CONFIG << 16 | 1 << 2,
+LIBUSB_CONFIG_B_CONFIGURATIONVALUE = LIBUSB_DT_CONFIG << 16 | 1 << 3,
+LIBUSB_CONFIG_I_CONFIGURATION = LIBUSB_DT_CONFIG << 16 | 1 << 4,
+LIBUSB_CONFIG_BM_ATTRIBUTES = LIBUSB_DT_CONFIG << 16 | 1 << 5,
+LIBUSB_CONFIG_B_MAXPOWER = LIBUSB_DT_CONFIG << 16 | 1 << 6,
+LIBUSB_CONFIG_S_CONFIGURATION = LIBUSB_DT_CONFIG << 16 | 1 << 7,
+LIBUSB_INTERFACE_B_LENGTH = LIBUSB_DT_INTERFACE << 16 | 1 << 0,
+LIBUSB_INTERFACE_B_INTERFACENUMBER = LIBUSB_DT_INTERFACE << 16 | 1 << 1,
+LIBUSB_INTERFACE_B_ALTERNATESETTING = LIBUSB_DT_INTERFACE << 16 | 1 << 2,
+LIBUSB_INTERFACE_B_NUMENDPOINTS = LIBUSB_DT_INTERFACE << 16 | 1 << 3,
+LIBUSB_INTERFACE_B_INTERFACECLASS = LIBUSB_DT_INTERFACE << 16 | 1 << 4,
+LIBUSB_INTERFACE_B_INTERFACESUBCLASS = LIBUSB_DT_INTERFACE << 16 | 1 << 5,
+LIBUSB_INTERFACE_B_INTERFACEPROTOCOL = LIBUSB_DT_INTERFACE << 16 | 1 << 6,
+LIBUSB_INTERFACE_I_INTERFACE = LIBUSB_DT_INTERFACE << 16 | 1 << 7,
+LIBUSB_INTERFACE_S_INTERFACE = LIBUSB_DT_INTERFACE << 16 | 1 << 8,
+LIBUSB_ENDPOINT_B_LENGTH = LIBUSB_DT_ENDPOINT << 16 | 1 << 0,
+LIBUSB_ENDPOINT_B_ENDPOINTADDRESS = LIBUSB_DT_ENDPOINT << 16 | 1 << 1,
+LIBUSB_ENDPOINT_BM_ATTRIBUTES = LIBUSB_DT_ENDPOINT << 16 | 1 << 2,
+LIBUSB_ENDPOINT_W_MAXPACKETSIZE = LIBUSB_DT_ENDPOINT << 16 | 1 << 3,
+LIBUSB_ENDPOINT_B_INTERVAL = LIBUSB_DT_ENDPOINT << 16 | 1 << 4,
+LIBUSB_ENDPOINT_AUDIO_B_REFRESH = LIBUSB_DT_ENDPOINT << 16 | 1 << 5,
+LIBUSB_ENDPOINT_AUDIO_B_SYNCHADDRESS = LIBUSB_DT_ENDPOINT << 16 | 1 << 6,
+LIBUSB_HUB_B_LENGTH = LIBUSB_DT_HUB << 16 | 1 << 0,
+LIBUSB_HUB_N_NBRPORTS = LIBUSB_DT_HUB << 16 | 1 << 1,
+LIBUSB_HUB_W_HUBCHARACTERISTICS = LIBUSB_DT_HUB << 16 | 1 << 2,
+LIBUSB_HUB_B_PWRON2PWRGOOD = LIBUSB_DT_HUB << 16 | 1 << 3,
+LIBUSB_HUB_B_HUBCONTRCURRENT = LIBUSB_DT_HUB << 16 | 1 << 4,
+LIBUSB_HID_B_LENGTH = LIBUSB_DT_HID << 16 | 1 << 0,
+LIBUSB_HID_BCD_HID = LIBUSB_DT_HID << 16 | 1 << 1,
+LIBUSB_HID_B_COUNTRYCODE = LIBUSB_DT_HID << 16 | 1 << 2,
+LIBUSB_HID_B_NUMDESCRIPTORS = LIBUSB_DT_HID << 16 | 1 << 3,
+LIBUSB_HID_I_DESCRIPTORTYPE = LIBUSB_DT_HID << 16 | 1 << 4,
+LIBUSB_HID_W_ITEMLENGTH = LIBUSB_DT_HID << 16 | 1 << 5,
+LIBUSB_HID_S_DESCRIPTORTYPE = LIBUSB_DT_HID << 16 | 1 << 6
+};
 
 #define LIBUSB_ENDPOINT_ADDRESS_MASK	0x0f    /* in bEndpointAddress */
 #define LIBUSB_ENDPOINT_DIR_MASK		0x80
@@ -897,8 +992,24 @@ struct libusb_control_setup {
 
 /* libusb */
 
+#if defined(OS_LINUX)
+#define libusb_os_options libusb_linux_options
+#elif defined(OS_DARWIN)
+#define libusb_os_options libusb_darwin_options
+#elif defined(OS_NETBSD)
+#define libusb_os_options libusb_netbsd_options
+#elif defined(OS_OPENBSD)
+#define libusb_os_options libusb_openbsd_options
+#elif defined(OS_WINDOWS)
+#define libusb_os_options libusb_windows_options
+#elif defined(OS_WINCE)
+#define libusb_os_options libusb_wince_options
+#endif
+
 struct libusb_context;
 struct libusb_device;
+struct libusb_options;
+struct libusb_os_options;
 struct libusb_device_handle;
 struct libusb_hotplug_callback;
 
@@ -961,6 +1072,8 @@ typedef struct libusb_context libusb_context;
  */
 typedef struct libusb_device libusb_device;
 
+typedef struct libusb_options libusb_options;
+typedef struct libusb_os_options libusb_os_options;
 
 /** \ingroup dev
  * Structure representing a handle on a USB device. This is an opaque type for
@@ -1188,6 +1301,49 @@ struct libusb_iso_packet_descriptor {
 	enum libusb_transfer_status status;
 };
 
+int  LIBUSB_CALL libusb_get_options(struct libusb_device_handle *hdev,
+			struct libusb_options **options, void *os_options);
+
+int  LIBUSB_CALL libusb_set_options(struct libusb_device_handle *hdev,
+			struct libusb_options *options, void *os_options);
+
+void LIBUSB_CALL libusb_free_options(struct libusb_options *options,
+			void *os_options);
+
+struct libusb_options;
+struct libusb_options {
+  int open_from_cache;
+  char mystring[20];
+};
+
+struct libusb_linux_options;
+struct libusb_linux_options {
+  int optionA;
+  int optionC;
+};
+
+struct libusb_darwin_options;
+struct libusb_darwin_options {
+  int optionB;
+  int optionC;
+};
+
+struct libusb_netbsd_options;
+struct libusb_netbsd_options {
+};
+
+struct libusb_openbsd_options;
+struct libusb_openbsd_options {
+};
+
+struct libusb_windows_options;
+struct libusb_windows_options {
+};
+
+struct libusb_wince_options;
+struct libusb_wince_options {
+};
+
 struct libusb_transfer;
 
 /** \ingroup asyncio
@@ -1370,6 +1526,8 @@ int LIBUSB_CALL libusb_get_max_packet_size(libusb_device *dev,
 int LIBUSB_CALL libusb_get_max_iso_packet_size(libusb_device *dev,
 	unsigned char endpoint);
 
+int LIBUSB_CALL libusb_open_extended(libusb_device *dev, libusb_device_handle **handle,
+	struct libusb_options *options, void *os_options);
 int LIBUSB_CALL libusb_open(libusb_device *dev, libusb_device_handle **handle);
 void LIBUSB_CALL libusb_close(libusb_device_handle *dev_handle);
 libusb_device * LIBUSB_CALL libusb_get_device(libusb_device_handle *dev_handle);

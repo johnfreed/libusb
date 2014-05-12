@@ -843,11 +843,103 @@ static int darwin_scan_devices(struct libusb_context *ctx) {
   return 0;
 }
 
-static int darwin_open (struct libusb_device_handle *dev_handle) {
+static int darwin_get_options(struct libusb_device_handle *dev_handle,
+    struct libusb_options **in_options, void **in_os_options)
+{
+
+  if (in_os_options) {
+    struct libusb_darwin_options *os_options;
+    if (!dev_handle) {
+      /* if there is no device handle, allocate memory, which
+         must be freed later with libusb_free_options() */
+      os_options = malloc(sizeof(*os_options));
+      if (!os_options)
+        return LIBUSB_ERROR_NO_MEM;
+      *in_os_options = os_options;
+    }
+  }
+  if (!dev_handle)
+    /* called with NULL handle, so no need to populate */
+    return LIBUSB_SUCCESS;
+
+  /* copy the options back from cache */
+  struct darwin_device_handle_priv *hpriv = (struct darwin_device_handle_priv *)dev_handle->os_priv;
+
+  if (in_options) {
+    struct libusb_options *tmp;
+    tmp = *in_options;
+    tmp->open_from_cache = hpriv->options_cache->open_from_cache;
+    snprintf(tmp->mystring, sizeof(*tmp->mystring), "%s", hpriv->options_cache->mystring);
+  }
+  if (in_os_options) {
+    struct libusb_darwin_options *os_tmp = *in_os_options;
+    os_tmp->optionB = hpriv->os_options_cache->optionB;
+    os_tmp->optionC = hpriv->os_options_cache->optionC;
+  }
+  return LIBUSB_SUCCESS;
+}
+
+static int darwin_set_options(struct libusb_device_handle *dev_handle,
+    struct libusb_options *options, void *os_options)
+{
+  if (!dev_handle)
+    return LIBUSB_ERROR_OTHER;
+
+  struct darwin_device_handle_priv *hpriv = (struct darwin_device_handle_priv *)dev_handle->os_priv;
+
+  if (os_options) {
+    struct libusb_darwin_options *os_tmp = os_options;
+
+    /* let them change optionC (but not optionB) */
+    hpriv->os_options_cache->optionC = os_tmp->optionC;
+  }
+  if (options) {
+    /* don't let them change open_from_cache status */
+    /*      hpriv->options_cache->open_from_cache = options->open_from_cache; */
+    /*let them change mystring */
+    snprintf(hpriv->options_cache->mystring, sizeof(*hpriv->options_cache->mystring), "%s", options->mystring);
+  }
+  return LIBUSB_SUCCESS;
+}
+
+static int darwin_open_extended (struct libusb_device_handle *dev_handle, struct libusb_options *options, void *in_options)
+{
   struct darwin_device_handle_priv *priv = (struct darwin_device_handle_priv *)dev_handle->os_priv;
   struct darwin_cached_device *dpriv = DARWIN_CACHED_DEVICE(dev_handle->dev);
+  struct libusb_darwin_options *os_options;
   IOReturn kresult;
 
+  /* make copy of options so user can't change them */
+  priv->options_cache = malloc(sizeof(*priv->options_cache));
+  if (!priv->options_cache)
+    return LIBUSB_ERROR_NO_MEM;
+
+  if (!options) {
+    /* set some default options */
+    priv->options_cache->open_from_cache = 0;
+  } else {
+    priv->options_cache->open_from_cache = options->open_from_cache;
+    snprintf(priv->options_cache->mystring, sizeof(*priv->options_cache->mystring), "%s", options->mystring);
+  }
+  /* make copy of os_options so user can't change them */
+  priv->os_options_cache = malloc(sizeof(*priv->os_options_cache));
+  if (!priv->os_options_cache)
+    return LIBUSB_ERROR_NO_MEM;
+  if (!in_options) {
+    /* set some default options */
+    priv->os_options_cache->optionB = 100;
+  } else {
+    os_options = (struct libusb_darwin_options *)in_options;
+    priv->os_options_cache->optionB = os_options->optionB;
+    priv->os_options_cache->optionC = os_options->optionC;
+  }
+
+  if (priv->options_cache->open_from_cache != 0) {
+    /* try to open read only, using cache only */
+    priv->is_open = 0;
+    return LIBUSB_SUCCESS;
+  }
+  /* otherwise, try to open for writing */
   if (0 == dpriv->open_count) {
     /* try to open the device */
     kresult = (*(dpriv->device))->USBDeviceOpenSeize (dpriv->device);
@@ -880,7 +972,7 @@ static int darwin_open (struct libusb_device_handle *dev_handle) {
 
     CFRetain (libusb_darwin_acfl);
 
-    /* add the cfSource to the aync run loop */
+    /* add the cfSource to the async run loop */
     CFRunLoopAddSource(libusb_darwin_acfl, priv->cfSource, kCFRunLoopCommonModes);
   }
 
@@ -897,7 +989,12 @@ static int darwin_open (struct libusb_device_handle *dev_handle) {
 
   usbi_dbg ("device open for access");
 
-  return 0;
+  return LIBUSB_SUCCESS;
+}
+
+static int darwin_open(struct libusb_device_handle *handle)
+{
+  return darwin_open_extended(handle, NULL, NULL);
 }
 
 static void darwin_close (struct libusb_device_handle *dev_handle) {
@@ -1892,6 +1989,7 @@ const struct usbi_os_backend darwin_backend = {
         .get_config_descriptor = darwin_get_config_descriptor,
 
         .open = darwin_open,
+        .open_extended = darwin_open_extended,
         .close = darwin_close,
         .get_configuration = darwin_get_configuration,
         .set_configuration = darwin_set_configuration,
@@ -1923,6 +2021,9 @@ const struct usbi_os_backend darwin_backend = {
 
         .device_priv_size = sizeof(struct darwin_device_priv),
         .device_handle_priv_size = sizeof(struct darwin_device_handle_priv),
+        .get_options = darwin_get_options,
+        .set_options = darwin_set_options,
+
         .transfer_priv_size = sizeof(struct darwin_transfer_priv),
         .add_iso_packet_size = 0,
 };

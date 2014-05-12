@@ -146,6 +146,8 @@ struct linux_device_priv {
 struct linux_device_handle_priv {
 	int fd;
 	uint32_t caps;
+	struct libusb_options *options_cache;
+	struct libusb_linux_options *os_options_cache;
 };
 
 enum reap_action {
@@ -198,9 +200,9 @@ static int _get_usbfs_fd(struct libusb_device *dev, mode_t mode, int silent)
 		return fd; /* Success */
 
 	if (errno == ENOENT) {
-		if (!silent) 
+		if (!silent)
 			usbi_err(ctx, "File doesn't exist, wait %d ms and try again\n", delay/1000);
-   
+ 
 		/* Wait 10ms for USB device path creation.*/
 		usleep(delay);
 
@@ -208,7 +210,7 @@ static int _get_usbfs_fd(struct libusb_device *dev, mode_t mode, int silent)
 		if (fd != -1)
 			return fd; /* Success */
 	}
-	
+
 	if (!silent) {
 		usbi_err(ctx, "libusb couldn't open USB device %s: %s",
 			 path, strerror(errno));
@@ -1275,13 +1277,106 @@ static int linux_default_scan_devices (struct libusb_context *ctx)
 }
 #endif
 
-static int op_open(struct libusb_device_handle *handle)
+static int op_get_options(struct libusb_device_handle *handle,
+		struct libusb_options **in_options, void **in_os_options)
+{
+	if (in_os_options) {
+		struct libusb_linux_options *os_options;
+		if (!handle) {
+			/* if called with NULL device handle, allocate memory, which
+			 * must be freed later with libusb_free_options() */
+			os_options = malloc(sizeof(*os_options));
+			if (!os_options)
+				return LIBUSB_ERROR_NO_MEM;
+			/* initialize here; could do memset of 0 */
+			os_options->optionA = 0;
+			os_options->optionC = 0;
+			*in_os_options = os_options;
+		}
+	}
+	if (!handle) {
+		/* called with NULL handle, so no need to populate */
+		return LIBUSB_SUCCESS;
+	}
+
+	/* copy the options back from cache */
+	struct linux_device_handle_priv *hpriv = _device_handle_priv(handle);
+
+	if (in_options) {
+		struct libusb_options *tmp;
+		tmp = *in_options;
+		tmp->open_from_cache = hpriv->options_cache->open_from_cache;
+		snprintf(tmp->mystring, sizeof(*tmp->mystring), "%s", hpriv->options_cache->mystring);
+	}
+	if (in_os_options) {
+		struct libusb_linux_options *os_tmp = *in_os_options;
+		os_tmp->optionA = hpriv->os_options_cache->optionA;
+		os_tmp->optionC = hpriv->os_options_cache->optionC;
+	}
+	return LIBUSB_SUCCESS;
+}
+
+static int op_set_options(struct libusb_device_handle *handle,
+		struct libusb_options *options, void *os_options)
+{
+	if (!handle)
+		return LIBUSB_ERROR_OTHER;
+
+	struct linux_device_handle_priv *hpriv = _device_handle_priv(handle);
+
+	if (options) {
+	        /* don't let them change open_from_cache status */
+	        /*      hpriv->options_cache->open_from_cache = options->open_from_cache; */
+	        /*let them change mystring */
+		snprintf(hpriv->options_cache->mystring, sizeof(*hpriv->options_cache->mystring), "%s", options->mystring);
+	}
+	if (os_options) {
+		struct libusb_linux_options *os_tmp = os_options;
+		/* let them change optionC (but not optionA) */
+		hpriv->os_options_cache->optionC = os_tmp->optionC;
+	}
+	return LIBUSB_SUCCESS;
+}
+
+static int op_open_extended(struct libusb_device_handle *handle,
+		struct libusb_options *options, void *in_options)
 {
 	struct linux_device_handle_priv *hpriv = _device_handle_priv(handle);
+	struct libusb_linux_options *os_options;
 	int r;
+	/* make copy of options so user can't change them */
+	hpriv->options_cache = malloc(sizeof(*hpriv->options_cache));
+	if(!hpriv->options_cache)
+		return LIBUSB_ERROR_NO_MEM;
+	if (!options) {
+		/* set some default options */
+		hpriv->options_cache->open_from_cache = 0;
+	} else {
+		hpriv->options_cache->open_from_cache = options->open_from_cache;
+		snprintf(hpriv->options_cache->mystring, sizeof(*hpriv->options_cache->mystring), "%s", options->mystring);
+	}
+	/* make copy of os_options so user can't change them */
+	hpriv->os_options_cache = malloc(sizeof(*hpriv->os_options_cache));
+	if(!hpriv->os_options_cache)
+		return LIBUSB_ERROR_NO_MEM;
+	if (!in_options) {
+		/* set some default options */
+		hpriv->os_options_cache->optionA = 100;
+	} else {
+		os_options = (struct libusb_linux_options *)in_options;
+		hpriv->os_options_cache->optionA = os_options->optionA;
+		hpriv->os_options_cache->optionC = os_options->optionC;
+	}
 
-	hpriv->fd = _get_usbfs_fd(handle->dev, O_RDWR, 0);
+	if (hpriv->options_cache->open_from_cache == 0) {
+		hpriv->fd = _get_usbfs_fd(handle->dev, O_RDWR, 0);
+	} else {
+		hpriv->fd = _get_usbfs_fd(handle->dev, O_RDONLY, 0);
+	}
 	if (hpriv->fd < 0) {
+		free(hpriv->os_options_cache);
+		free(hpriv->options_cache);
+
 		if (hpriv->fd == LIBUSB_ERROR_NO_DEVICE) {
 			/* device will still be marked as attached if hotplug monitor thread
 			 * hasn't processed remove event yet */
@@ -1308,15 +1403,32 @@ static int op_open(struct libusb_device_handle *handle)
 		if (supports_flag_bulk_continuation)
 			hpriv->caps |= USBFS_CAP_BULK_CONTINUATION;
 	}
+	/* don't poll if read only */
+	if (hpriv->options_cache->open_from_cache == 0) {
+		return usbi_add_pollfd(HANDLE_CTX(handle), hpriv->fd, POLLOUT);
+	} else {
+		return LIBUSB_SUCCESS;
+	}
+}
 
-	return usbi_add_pollfd(HANDLE_CTX(handle), hpriv->fd, POLLOUT);
+static int op_open(struct libusb_device_handle *handle)
+{
+	return op_open_extended(handle, NULL, NULL);
 }
 
 static void op_close(struct libusb_device_handle *dev_handle)
 {
-	int fd = _device_handle_priv(dev_handle)->fd;
-	usbi_remove_pollfd(HANDLE_CTX(dev_handle), fd);
-	close(fd);
+	struct linux_device_handle_priv *hpriv = _device_handle_priv(dev_handle);
+	if (hpriv->os_options_cache) {
+		free(hpriv->os_options_cache);
+	}
+	if (hpriv->options_cache) {
+		if (hpriv->options_cache->open_from_cache == 0) {
+			usbi_remove_pollfd(HANDLE_CTX(dev_handle), hpriv->fd);
+			close(hpriv->fd);
+		}
+		free(hpriv->options_cache);
+	}
 }
 
 static int op_get_configuration(struct libusb_device_handle *handle,
@@ -2651,6 +2763,7 @@ const struct usbi_os_backend linux_usbfs_backend = {
 	.get_config_descriptor_by_value = op_get_config_descriptor_by_value,
 
 	.open = op_open,
+	.open_extended = op_open_extended,
 	.close = op_close,
 	.get_configuration = op_get_configuration,
 	.set_configuration = op_set_configuration,
@@ -2684,6 +2797,10 @@ const struct usbi_os_backend linux_usbfs_backend = {
 
 	.device_priv_size = sizeof(struct linux_device_priv),
 	.device_handle_priv_size = sizeof(struct linux_device_handle_priv),
+
+	.get_options = op_get_options,
+	.set_options = op_set_options,
+
 	.transfer_priv_size = sizeof(struct linux_transfer_priv),
 	.add_iso_packet_size = 0,
 };

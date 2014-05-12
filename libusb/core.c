@@ -719,6 +719,7 @@ out:
 void API_EXPORTED libusb_free_device_list(libusb_device **list,
 	int unref_devices)
 {
+	usbi_dbg("");
 	if (!list)
 		return;
 
@@ -1076,15 +1077,22 @@ void usbi_fd_notification(struct libusb_context *ctx)
  * \returns LIBUSB_ERROR_NO_DEVICE if the device has been disconnected
  * \returns another LIBUSB_ERROR code on other failure
  */
-int API_EXPORTED libusb_open(libusb_device *dev,
-	libusb_device_handle **handle)
+
+int API_EXPORTED libusb_open_extended(
+	libusb_device *dev,
+	libusb_device_handle **handle,
+	struct libusb_options *options,
+	void *os_options)
 {
+	if (!dev)
+		return LIBUSB_ERROR_NO_DEVICE;
+	if (!handle)
+		return LIBUSB_ERROR_OTHER;
 	struct libusb_context *ctx = DEVICE_CTX(dev);
 	struct libusb_device_handle *_handle;
 	size_t priv_size = usbi_backend->device_handle_priv_size;
 	int r;
 	usbi_dbg("open %d.%d", dev->bus_number, dev->device_address);
-
 	if (!dev->attached) {
 		return LIBUSB_ERROR_NO_DEVICE;
 	}
@@ -1103,8 +1111,7 @@ int API_EXPORTED libusb_open(libusb_device *dev,
 	_handle->auto_detach_kernel_driver = 0;
 	_handle->claimed_interfaces = 0;
 	memset(&_handle->os_priv, 0, priv_size);
-
-	r = usbi_backend->open(_handle);
+	r = usbi_backend->open_extended(_handle, options, os_options);
 	if (r < 0) {
 		usbi_dbg("open %d.%d returns %d", dev->bus_number, dev->device_address, r);
 		libusb_unref_device(dev);
@@ -1126,7 +1133,53 @@ int API_EXPORTED libusb_open(libusb_device *dev,
 	 * so that it picks up the new fd, and then continues. */
 	usbi_fd_notification(ctx);
 
-	return 0;
+	return LIBUSB_SUCCESS;
+}
+
+int API_EXPORTED libusb_open(libusb_device *dev,
+	libusb_device_handle **handle)
+{
+	return libusb_open_extended(dev, handle, NULL, NULL);
+}
+
+int API_EXPORTED libusb_get_options(struct libusb_device_handle *handle,
+	struct libusb_options **in_options, void *in_os_options)
+{
+	if (in_options) {
+		struct libusb_options *options;
+		if (!handle) {
+			/* allocate space, which will need
+			 * to be freed by libusb_free_options() */
+			options = malloc(sizeof(*options));
+			if (!options)
+				return LIBUSB_ERROR_NO_MEM;
+			/* initialize here; could do memset of zeroes */
+			options->open_from_cache = 0;
+			memset(options->mystring, 0, sizeof(options->mystring));
+			*in_options = options;
+		}
+	}
+	/* backend returns cached values if there is a handle */
+	return usbi_backend->get_options(handle, in_options, in_os_options);
+}
+
+int API_EXPORTED libusb_set_options(struct libusb_device_handle *handle,
+				struct libusb_options *options, void *os_options)
+{
+	if (!handle)
+		return LIBUSB_ERROR_OTHER;
+	if (!options && !os_options)
+		return LIBUSB_ERROR_OTHER;
+	/* backend caches options */
+	return usbi_backend->set_options(handle, options, os_options);
+}
+
+void API_EXPORTED libusb_free_options(struct libusb_options *options, void *os_options)
+{
+	if (options)
+		free(options);
+	if (os_options)
+		free((struct libusb_os_options *)os_options);
 }
 
 /** \ingroup dev

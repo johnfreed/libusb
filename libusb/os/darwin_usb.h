@@ -108,6 +108,7 @@ typedef IOCFPlugInInterface *io_cf_plugin_ref_t;
 typedef IONotificationPortRef io_notification_port_t;
 
 /* private structures */
+
 struct darwin_cached_device {
   struct list_head      list;
   IOUSBDeviceDescriptor dev_descriptor;
@@ -131,6 +132,8 @@ struct darwin_device_handle_priv {
   int                  is_open;
   CFRunLoopSourceRef   cfSource;
   int                  fds[2];
+  struct libusb_options        *options_cache;
+  struct libusb_darwin_options *os_options_cache;
 
   struct darwin_interface {
     usb_interface_t    **interface;
