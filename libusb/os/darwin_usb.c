@@ -1522,7 +1522,7 @@ static int submit_bulk_transfer(struct usbi_transfer *itransfer) {
 
   IOReturn               ret;
   uint8_t                transferType;
-  /* None of the values below are used in libusbx for bulk transfers */
+  /* None of the values below are used in libusb for bulk transfers */
   uint8_t                direction, number, interval, pipeRef;
   uint16_t               maxPacketSize;
 
