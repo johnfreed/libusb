@@ -241,6 +241,34 @@ static int get_ioregistry_value_number (io_service_t service, CFStringRef proper
   return ret;
 }
 
+static IOReturn darwin_get_service_from_location_id ( unsigned int location_id, io_service_t *service )
+{
+	io_iterator_t deviceIterator;
+	unsigned int found_location_id;
+	SInt32 tmp;
+
+	CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOUSBDeviceClassName);
+
+	if (!matchingDict)
+		return kIOReturnError;
+
+	IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &deviceIterator);
+
+	while ((*service = IOIteratorNext (deviceIterator))) {
+		/* get the location from the i/o registry */
+		(void)get_ioregistry_value_number (*service, CFSTR(kUSBDevicePropertyLocationID), kCFNumberSInt32Type, &tmp);
+		found_location_id = (UInt32)tmp;
+
+		if (location_id == found_location_id) {
+			IOObjectRelease(deviceIterator);
+			return kIOReturnSuccess;
+		}
+	}
+	/* not found, shouldn't happen */
+	IOObjectRelease(deviceIterator);
+	return kIOReturnError;
+}
+
 static usb_device_t **darwin_device_from_service (io_service_t service)
 {
   io_cf_plugin_ref_t *plugInInterface = NULL;
@@ -1432,6 +1460,51 @@ static int darwin_detach_kernel_driver (struct libusb_device_handle *dev_handle,
   return LIBUSB_ERROR_NOT_SUPPORTED;
 }
 
+static int darwin_get_kernel_driver_name (struct libusb_device *dev, int ifnum,
+              unsigned char *buf, size_t bufsize) {
+  io_service_t service;
+  io_registry_entry_t child;
+  kern_return_t kr;
+  CFIndex length;
+  CFIndex maxSize;
+  struct darwin_cached_device *dpriv;
+  unsigned int location_id;
+  CFStringRef cfBuff;
+
+  if (bufsize < 1)
+      return 0;
+  buf[0] = '\0';
+
+  if (!dev)
+      return 0;
+
+  dpriv = DARWIN_CACHED_DEVICE(dev);
+  location_id = dpriv->location;
+
+  kr = darwin_get_service_from_location_id(location_id, &service);
+  if (kr) {
+      fprintf(stderr, "Failed to find device 0x%08x\n",location_id);
+      return LIBUSB_ERROR_OTHER;
+  }
+  kr = IORegistryEntryGetChildEntry(service, kIOServicePlane, &child);
+  if (kr) {
+      fprintf(stderr, "Failed to find driver\n");
+      return LIBUSB_ERROR_OTHER;
+  }
+
+  cfBuff = (CFStringRef)IORegistryEntryCreateCFProperty (child, CFSTR("IOClass"), kCFAllocatorDefault, 0);
+  if (cfBuff) {
+      length = CFStringGetLength(cfBuff);
+      maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8);
+      char *utf_buff = malloc(maxSize);
+      CFStringGetCString(cfBuff, utf_buff, maxSize, kCFStringEncodingUTF8);
+      CFRelease(cfBuff);
+      strncpy(buf, utf_buff, bufsize);
+      free(utf_buff);
+  }
+  return strlen(buf);
+}
+
 static void darwin_destroy_device(struct libusb_device *dev) {
   struct darwin_device_priv *dpriv = (struct darwin_device_priv *) dev->os_priv;
 
@@ -2008,6 +2081,7 @@ const struct usbi_os_backend darwin_backend = {
         .kernel_driver_active = darwin_kernel_driver_active,
         .detach_kernel_driver = darwin_detach_kernel_driver,
         .attach_kernel_driver = darwin_attach_kernel_driver,
+        .get_kernel_driver_name = darwin_get_kernel_driver_name,
 
         .destroy_device = darwin_destroy_device,
 

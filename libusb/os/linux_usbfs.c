@@ -1657,6 +1657,70 @@ static int op_free_streams(struct libusb_device_handle *handle,
 				endpoints, num_endpoints);
 }
 
+/* return value is length of driver name if >=0, otherwise libusb error code */
+static int op_get_kernel_driver_name(struct libusb_device *dev,
+	int ifnum, unsigned char *buf, size_t bufsize)
+{
+	uint8_t port_numbers[6];
+	int l;
+	char path[PATH_MAX];
+	char newpath[PATH_MAX];
+	int busnum;
+	int i;
+	int count;
+
+	count = libusb_get_port_numbers(dev, port_numbers, 6);
+	busnum = libusb_get_bus_number(dev) ;
+
+	strcpy(path, "/sys/bus/usb/devices/");
+	buf[0] = '\0';
+	if (count == 0) {
+		/* root hub is special case */
+		snprintf(path + strlen(path), sizeof(path) - strlen(path), "usb%d", busnum);
+		if (strlen(path) < PATH_MAX) {
+			l = readlink(path, newpath, PATH_MAX);
+			if (l >= 0) {
+				if (l < PATH_MAX - 1)
+					newpath[l] = '\0';
+				else
+					newpath[0] = '\0';
+				char *p = strrchr(newpath, '/');
+				if (p)
+					*p = '\0';
+
+				snprintf(path, sizeof(path), "%s/%s/driver", "/sys/bus/usb/devices/", newpath);
+
+				goto read_driver;
+			}
+		}
+	}
+	snprintf(path + strlen(path), sizeof(path) - strlen(path), "%d", busnum);
+	for (i=0; i < count; i++) {
+		int next = port_numbers[i];
+		if (next) {
+			snprintf(path + strlen(path), sizeof(path) - strlen(path), "%s%d", ((i>0) ? "." : "-" ), next);
+		} else {
+			break;
+		}
+	}
+	snprintf(path + strlen(path), sizeof(path) - strlen(path), ":1.%d/driver", ifnum);
+read_driver:
+	if (strlen(path) < PATH_MAX) {
+		l = readlink(path, newpath, PATH_MAX);
+		if (l >= 0) {
+			if (l < PATH_MAX - 1)
+				newpath[l] = '\0';
+			else
+				newpath[0] = '\0';
+			char *p = strrchr(newpath, '/');
+			if (p)
+				return snprintf(buf, bufsize, "%s", p + 1);
+		}
+	}
+	usbi_dbg("Cannot read driver link");
+	return LIBUSB_ERROR_OTHER;
+}
+
 static int op_kernel_driver_active(struct libusb_device_handle *handle,
 	int interface)
 {
@@ -2780,6 +2844,7 @@ const struct usbi_os_backend linux_usbfs_backend = {
 	.kernel_driver_active = op_kernel_driver_active,
 	.detach_kernel_driver = op_detach_kernel_driver,
 	.attach_kernel_driver = op_attach_kernel_driver,
+	.get_kernel_driver_name = op_get_kernel_driver_name,
 
 	.destroy_device = op_destroy_device,
 

@@ -907,6 +907,9 @@ struct usbi_os_backend {
 	int (*attach_kernel_driver)(struct libusb_device_handle *handle,
 		int interface_number);
 
+	int (*get_kernel_driver_name)(struct libusb_device *dev,
+		int interface_number, unsigned char *buffer, size_t len);
+
 	/* Destroy a device. Optional.
 	 *
 	 * This function is called when the last reference to a device is
