@@ -1371,7 +1371,7 @@ static int disarm_timerfd(struct libusb_context *ctx)
 	const struct itimerspec disarm_timer = { { 0, 0 }, { 0, 0 } };
 	int r;
 
-	usbi_dbg("");
+	usbi_dbg("TIMERFD_AVAILABLE");
 	r = timerfd_settime(ctx->timerfd, 0, &disarm_timer, NULL);
 	if (r < 0)
 		return LIBUSB_ERROR_OTHER;
@@ -1416,6 +1416,7 @@ disarm:
 #else
 static int arm_timerfd_for_next_timeout(struct libusb_context *ctx)
 {
+	usbi_dbg("TIMERFD not available");
 	(void)ctx;
 	return 0;
 }
@@ -1451,18 +1452,18 @@ int API_EXPORTED libusb_submit_transfer(struct libusb_transfer *transfer)
 	}
 
 	usbi_mutex_lock(&ctx->flying_transfers_lock);
+	/* keep a reference to this device if we have an active transfer */
+	libusb_ref_device(transfer->dev_handle->dev);
 	r = add_to_flying_list(itransfer);
 	if (r == LIBUSB_SUCCESS) {
 		r = usbi_backend->submit_transfer(itransfer);
 	}
 	if (r != LIBUSB_SUCCESS) {
 		list_del(&itransfer->list);
+		libusb_unref_device(transfer->dev_handle->dev);
 		arm_timerfd_for_next_timeout(ctx);
 	}
 	usbi_mutex_unlock(&ctx->flying_transfers_lock);
-
-	/* keep a reference to this device */
-	libusb_ref_device(transfer->dev_handle->dev);
 out:
 	updated_fds = (itransfer->flags & USBI_TRANSFER_UPDATED_FDS);
 	usbi_mutex_unlock(&itransfer->lock);

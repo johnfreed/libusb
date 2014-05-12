@@ -1187,6 +1187,8 @@ static void do_close(struct libusb_context *ctx,
 	struct usbi_transfer *itransfer;
 	struct usbi_transfer *tmp;
 
+	if (!dev_handle)
+		return;
 	libusb_lock_events(ctx);
 
 	/* remove any transfers in flight that are for this device */
@@ -1314,6 +1316,8 @@ void API_EXPORTED libusb_close(libusb_device_handle *dev_handle)
 DEFAULT_VISIBILITY
 libusb_device * LIBUSB_CALL libusb_get_device(libusb_device_handle *dev_handle)
 {
+	if (!dev_handle)
+		return NULL;
 	return dev_handle->dev;
 }
 
@@ -1337,22 +1341,25 @@ libusb_device * LIBUSB_CALL libusb_get_device(libusb_device_handle *dev_handle)
  * \returns LIBUSB_ERROR_NO_DEVICE if the device has been disconnected
  * \returns another LIBUSB_ERROR code on other failure
  */
-int API_EXPORTED libusb_get_configuration(libusb_device_handle *dev,
+int API_EXPORTED libusb_get_configuration(libusb_device_handle *dev_handle,
 	int *config)
 {
 	int r = LIBUSB_ERROR_NOT_SUPPORTED;
 
+	if (!dev_handle)
+		return LIBUSB_ERROR_NO_DEVICE;
+
 	usbi_dbg("");
 	if (usbi_backend->get_configuration)
-		r = usbi_backend->get_configuration(dev, config);
+		r = usbi_backend->get_configuration(dev_handle, config);
 
 	if (r == LIBUSB_ERROR_NOT_SUPPORTED) {
 		uint8_t tmp = 0;
 		usbi_dbg("falling back to control message");
-		r = libusb_control_transfer(dev, LIBUSB_ENDPOINT_IN,
+		r = libusb_control_transfer(dev_handle, LIBUSB_ENDPOINT_IN,
 			LIBUSB_REQUEST_GET_CONFIGURATION, 0, 0, &tmp, 1, 1000);
 		if (r == 0) {
-			usbi_err(HANDLE_CTX(dev), "zero bytes returned in ctrl transfer?");
+			usbi_err(HANDLE_CTX(dev_handle), "zero bytes returned in ctrl transfer?");
 			r = LIBUSB_ERROR_IO;
 		} else if (r == 1) {
 			r = 0;
@@ -1414,11 +1421,13 @@ int API_EXPORTED libusb_get_configuration(libusb_device_handle *dev,
  * \returns another LIBUSB_ERROR code on other failure
  * \see libusb_set_auto_detach_kernel_driver()
  */
-int API_EXPORTED libusb_set_configuration(libusb_device_handle *dev,
+int API_EXPORTED libusb_set_configuration(libusb_device_handle *dev_handle,
 	int configuration)
 {
 	usbi_dbg("configuration %d", configuration);
-	return usbi_backend->set_configuration(dev, configuration);
+	if (!dev_handle)
+		return LIBUSB_ERROR_NO_DEVICE;
+	return usbi_backend->set_configuration(dev_handle, configuration);
 }
 
 /** \ingroup dev
@@ -1449,7 +1458,7 @@ int API_EXPORTED libusb_set_configuration(libusb_device_handle *dev,
  * \returns a LIBUSB_ERROR code on other failure
  * \see libusb_set_auto_detach_kernel_driver()
  */
-int API_EXPORTED libusb_claim_interface(libusb_device_handle *dev,
+int API_EXPORTED libusb_claim_interface(libusb_device_handle *dev_handle,
 	int interface_number)
 {
 	int r = 0;
@@ -1458,19 +1467,19 @@ int API_EXPORTED libusb_claim_interface(libusb_device_handle *dev,
 	if (interface_number >= USB_MAXINTERFACES)
 		return LIBUSB_ERROR_INVALID_PARAM;
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
-	usbi_mutex_lock(&dev->lock);
-	if (dev->claimed_interfaces & (1 << interface_number))
+	usbi_mutex_lock(&dev_handle->lock);
+	if (dev_handle->claimed_interfaces & (1 << interface_number))
 		goto out;
 
-	r = usbi_backend->claim_interface(dev, interface_number);
+	r = usbi_backend->claim_interface(dev_handle, interface_number);
 	if (r == 0)
-		dev->claimed_interfaces |= 1 << interface_number;
+		dev_handle->claimed_interfaces |= 1 << interface_number;
 
 out:
-	usbi_mutex_unlock(&dev->lock);
+	usbi_mutex_unlock(&dev_handle->lock);
 	return r;
 }
 
@@ -1493,7 +1502,7 @@ out:
  * \returns another LIBUSB_ERROR code on other failure
  * \see libusb_set_auto_detach_kernel_driver()
  */
-int API_EXPORTED libusb_release_interface(libusb_device_handle *dev,
+int API_EXPORTED libusb_release_interface(libusb_device_handle *dev_handle,
 	int interface_number)
 {
 	int r;
@@ -1501,19 +1510,20 @@ int API_EXPORTED libusb_release_interface(libusb_device_handle *dev,
 	usbi_dbg("interface %d", interface_number);
 	if (interface_number >= USB_MAXINTERFACES)
 		return LIBUSB_ERROR_INVALID_PARAM;
-
-	usbi_mutex_lock(&dev->lock);
-	if (!(dev->claimed_interfaces & (1 << interface_number))) {
+	if (!dev_handle)
+		return LIBUSB_ERROR_NO_DEVICE;
+	usbi_mutex_lock(&dev_handle->lock);
+	if (!(dev_handle->claimed_interfaces & (1 << interface_number))) {
 		r = LIBUSB_ERROR_NOT_FOUND;
 		goto out;
 	}
 
-	r = usbi_backend->release_interface(dev, interface_number);
+	r = usbi_backend->release_interface(dev_handle, interface_number);
 	if (r == 0)
-		dev->claimed_interfaces &= ~(1 << interface_number);
+		dev_handle->claimed_interfaces &= ~(1 << interface_number);
 
 out:
-	usbi_mutex_unlock(&dev->lock);
+	usbi_mutex_unlock(&dev_handle->lock);
 	return r;
 }
 
@@ -1538,27 +1548,29 @@ out:
  * \returns LIBUSB_ERROR_NO_DEVICE if the device has been disconnected
  * \returns another LIBUSB_ERROR code on other failure
  */
-int API_EXPORTED libusb_set_interface_alt_setting(libusb_device_handle *dev,
+int API_EXPORTED libusb_set_interface_alt_setting(libusb_device_handle *dev_handle,
 	int interface_number, int alternate_setting)
 {
+	if (!dev_handle)
+		return LIBUSB_ERROR_NO_DEVICE;
 	usbi_dbg("interface %d altsetting %d",
 		interface_number, alternate_setting);
 	if (interface_number >= USB_MAXINTERFACES)
 		return LIBUSB_ERROR_INVALID_PARAM;
 
-	usbi_mutex_lock(&dev->lock);
-	if (!dev->dev->attached) {
-		usbi_mutex_unlock(&dev->lock);
+	usbi_mutex_lock(&dev_handle->lock);
+	if (!dev_handle->dev || !dev_handle->dev->attached) {
+		usbi_mutex_unlock(&dev_handle->lock);
 		return LIBUSB_ERROR_NO_DEVICE;
 	}
 
-	if (!(dev->claimed_interfaces & (1 << interface_number))) {
-		usbi_mutex_unlock(&dev->lock);
+	if (!(dev_handle->claimed_interfaces & (1 << interface_number))) {
+		usbi_mutex_unlock(&dev_handle->lock);
 		return LIBUSB_ERROR_NOT_FOUND;
 	}
-	usbi_mutex_unlock(&dev->lock);
+	usbi_mutex_unlock(&dev_handle->lock);
 
-	return usbi_backend->set_interface_altsetting(dev, interface_number,
+	return usbi_backend->set_interface_altsetting(dev_handle, interface_number,
 		alternate_setting);
 }
 
@@ -1578,14 +1590,14 @@ int API_EXPORTED libusb_set_interface_alt_setting(libusb_device_handle *dev,
  * \returns LIBUSB_ERROR_NO_DEVICE if the device has been disconnected
  * \returns another LIBUSB_ERROR code on other failure
  */
-int API_EXPORTED libusb_clear_halt(libusb_device_handle *dev,
+int API_EXPORTED libusb_clear_halt(libusb_device_handle *dev_handle,
 	unsigned char endpoint)
 {
 	usbi_dbg("endpoint %x", endpoint);
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
-	return usbi_backend->clear_halt(dev, endpoint);
+	return usbi_backend->clear_halt(dev_handle, endpoint);
 }
 
 /** \ingroup dev
@@ -1607,13 +1619,13 @@ int API_EXPORTED libusb_clear_halt(libusb_device_handle *dev,
  * device has been disconnected
  * \returns another LIBUSB_ERROR code on other failure
  */
-int API_EXPORTED libusb_reset_device(libusb_device_handle *dev)
+int API_EXPORTED libusb_reset_device(libusb_device_handle *dev_handle)
 {
 	usbi_dbg("");
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
-	return usbi_backend->reset_device(dev);
+	return usbi_backend->reset_device(dev_handle);
 }
 
 /** \ingroup asyncio
@@ -1637,16 +1649,16 @@ int API_EXPORTED libusb_reset_device(libusb_device_handle *dev)
  * \param num_endpoints length of the endpoints array
  * \returns number of streams allocated, or a LIBUSB_ERROR code on failure
  */
-int API_EXPORTED libusb_alloc_streams(libusb_device_handle *dev,
+int API_EXPORTED libusb_alloc_streams(libusb_device_handle *dev_handle,
 	uint32_t num_streams, unsigned char *endpoints, int num_endpoints)
 {
 	usbi_dbg("streams %u eps %d", (unsigned) num_streams, num_endpoints);
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
 	if (usbi_backend->alloc_streams)
-		return usbi_backend->alloc_streams(dev, num_streams, endpoints,
+		return usbi_backend->alloc_streams(dev_handle, num_streams, endpoints,
 						   num_endpoints);
 	else
 		return LIBUSB_ERROR_NOT_SUPPORTED;
@@ -1664,16 +1676,16 @@ int API_EXPORTED libusb_alloc_streams(libusb_device_handle *dev,
  * \param num_endpoints length of the endpoints array
  * \returns LIBUSB_SUCCESS, or a LIBUSB_ERROR code on failure
  */
-int API_EXPORTED libusb_free_streams(libusb_device_handle *dev,
+int API_EXPORTED libusb_free_streams(libusb_device_handle *dev_handle,
 	unsigned char *endpoints, int num_endpoints)
 {
 	usbi_dbg("eps %d", num_endpoints);
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
 	if (usbi_backend->free_streams)
-		return usbi_backend->free_streams(dev, endpoints,
+		return usbi_backend->free_streams(dev_handle, endpoints,
 						  num_endpoints);
 	else
 		return LIBUSB_ERROR_NOT_SUPPORTED;
@@ -1696,16 +1708,16 @@ int API_EXPORTED libusb_free_streams(libusb_device_handle *dev,
  * \returns another LIBUSB_ERROR code on other failure
  * \see libusb_detach_kernel_driver()
  */
-int API_EXPORTED libusb_kernel_driver_active(libusb_device_handle *dev,
+int API_EXPORTED libusb_kernel_driver_active(libusb_device_handle *dev_handle,
 	int interface_number)
 {
 	usbi_dbg("interface %d", interface_number);
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
 	if (usbi_backend->kernel_driver_active)
-		return usbi_backend->kernel_driver_active(dev, interface_number);
+		return usbi_backend->kernel_driver_active(dev_handle, interface_number);
 	else
 		return LIBUSB_ERROR_NOT_SUPPORTED;
 }
@@ -1731,16 +1743,16 @@ int API_EXPORTED libusb_kernel_driver_active(libusb_device_handle *dev,
  * \returns another LIBUSB_ERROR code on other failure
  * \see libusb_kernel_driver_active()
  */
-int API_EXPORTED libusb_detach_kernel_driver(libusb_device_handle *dev,
+int API_EXPORTED libusb_detach_kernel_driver(libusb_device_handle *dev_handle,
 	int interface_number)
 {
 	usbi_dbg("interface %d", interface_number);
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
 	if (usbi_backend->detach_kernel_driver)
-		return usbi_backend->detach_kernel_driver(dev, interface_number);
+		return usbi_backend->detach_kernel_driver(dev_handle, interface_number);
 	else
 		return LIBUSB_ERROR_NOT_SUPPORTED;
 }
@@ -1765,16 +1777,16 @@ int API_EXPORTED libusb_detach_kernel_driver(libusb_device_handle *dev,
  * \returns another LIBUSB_ERROR code on other failure
  * \see libusb_kernel_driver_active()
  */
-int API_EXPORTED libusb_attach_kernel_driver(libusb_device_handle *dev,
+int API_EXPORTED libusb_attach_kernel_driver(libusb_device_handle *dev_handle,
 	int interface_number)
 {
 	usbi_dbg("interface %d", interface_number);
 
-	if (!dev->dev->attached)
+	if (!dev_handle || !dev_handle->dev || !dev_handle->dev->attached)
 		return LIBUSB_ERROR_NO_DEVICE;
 
 	if (usbi_backend->attach_kernel_driver)
-		return usbi_backend->attach_kernel_driver(dev, interface_number);
+		return usbi_backend->attach_kernel_driver(dev_handle, interface_number);
 	else
 		return LIBUSB_ERROR_NOT_SUPPORTED;
 }
@@ -1802,12 +1814,13 @@ int API_EXPORTED libusb_attach_kernel_driver(libusb_device_handle *dev,
  * \see libusb_set_configuration()
  */
 int API_EXPORTED libusb_set_auto_detach_kernel_driver(
-	libusb_device_handle *dev, int enable)
+	libusb_device_handle *dev_handle, int enable)
 {
 	if (!(usbi_backend->caps & USBI_CAP_SUPPORTS_DETACH_KERNEL_DRIVER))
 		return LIBUSB_ERROR_NOT_SUPPORTED;
-
-	dev->auto_detach_kernel_driver = enable;
+	if (!dev_handle)
+		return LIBUSB_ERROR_NO_DEVICE;
+	dev_handle->auto_detach_kernel_driver = enable;
 	return LIBUSB_SUCCESS;
 }
 
@@ -2010,9 +2023,12 @@ void API_EXPORTED libusb_exit(struct libusb_context *ctx)
 			libusb_handle_events_timeout(ctx, &tv);
 
 		usbi_mutex_lock(&ctx->usb_devs_lock);
+
 		list_for_each_entry_safe(dev, next, &ctx->usb_devs, list, struct libusb_device) {
 			list_del(&dev->list);
-			libusb_unref_device(dev);
+			/* free_device_list(list, 1) might have already unreffed this device */
+			if (dev->refcnt > 0)
+				libusb_unref_device(dev);
 		}
 		usbi_mutex_unlock(&ctx->usb_devs_lock);
 	}
